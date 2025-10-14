@@ -1,0 +1,48 @@
+# Laravel
+/vendor/
+/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.backup
+.env.production
+.env.*.local
+.phpunit.result.cache
+
+# Storage
+/storage/*.key
+/storage/framework/cache/data/*
+/storage/framework/views/*
+/storage/framework/sessions/*
+/storage/logs/laravel.log
+
+# Public assets
+/public/hot
+/public/storage
+/public/build
+
+# Build assets
+bootstrap/cache/packages.php
+bootstrap/cache/services.php
+
+# Docker
+.dockerignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+/coverage/
+
+# Local docker volumes (pero no la configuración)
+mysql_data/
