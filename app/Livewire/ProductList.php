@@ -42,14 +42,20 @@ class ProductList extends Component
             ]);
         }
 
+        // Disparar evento para actualizar el contador
         $this->dispatch('cart-count-updated');
-        $this->dispatch('notify', message: 'Producto agregado al carrito', type: 'success');
+        
+        // Notificación
+        $this->dispatch('notify', 
+            message: 'Producto agregado al carrito', 
+            type: 'success'
+        );
     }
 
-   public function render()
+    public function render()
     {
         return view('livewire.product-list', [
             'products' => Product::active()->inStock()->paginate(8)
-        ])->layout('components.layouts.app');
+        ])->layout('components.app-layout');
     }
 }

@@ -56,15 +56,15 @@ class User extends Authenticatable
         return $this->hasMany(Order::class);
     }
 
-    public function getCartTotalAttribute()
-    {
-        return $this->cartItems->sum(function ($item) {
-            return $item->subtotal;
-        });
-    }
-
     public function getCartItemsCountAttribute()
     {
-        return $this->cartItems->sum('quantity');
+        return $this->cartItems()->sum('quantity');
+    }
+
+    public function getCartTotalAttribute()
+    {
+        return $this->cartItems->sum(function ($cartItem) {
+            return $cartItem->product->price * $cartItem->quantity;
+        });
     }
 }

@@ -8,6 +8,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\ResetPasswordController;
+use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 
@@ -44,10 +45,54 @@ Route::get("/cart/count", function () {
     return response()->json(["count" => 0]);
 })->name("cart.count");
 
-// Rutas protegidas
+// Ruta de éxito de pago
+Route::get("/checkout/success", function () {
+    return redirect()->route("dashboard")->with("success", "¡Pago procesado exitosamente!");
+})->name("checkout.success");
+
+// Webhook de Stripe - SOLO POST
+Route::post("/stripe/webhook", [StripeWebhookController::class, "handleWebhook"])
+    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
+
+// En routes/web.php
 Route::middleware(["auth"])->group(function () {
     Route::get("/cart", ShoppingCart::class)->name("cart");
     Route::get("/checkout", Checkout::class)->name("checkout");
+    Route::get('/checkout/success', function () {
+        $paymentIntentId = request('payment_intent');
+        
+        \Log::info("Checkout success accessed", [
+            'payment_intent' => $paymentIntentId,
+            'all_params' => request()->all()
+        ]);
+
+        if (!$paymentIntentId) {
+            \Log::error("No payment_intent found in success URL");
+            return redirect()->route('dashboard')->with('error', 'No se pudo verificar el pago');
+        }
+
+        try {
+            // Buscar la orden por payment intent
+            $order = \App\Models\Order::where('stripe_payment_intent_id', $paymentIntentId)->first();
+            
+            if ($order) {
+                \Log::info("Order found: #" . $order->id);
+                return redirect()->route('orders.show', $order->id)->with('success', '¡Pago exitoso!');
+            } else {
+                \Log::warning("Order not found for payment intent: " . $paymentIntentId);
+                
+                // Si no encuentra la orden, redirigir al dashboard con mensaje
+                return redirect()->route('dashboard')->with('warning', 'Pago procesado. La orden está siendo creada...');
+            }
+        } catch (\Exception $e) {
+            \Log::error("Error in checkout success: " . $e->getMessage());
+            return redirect()->route('dashboard')->with('error', 'Error: ' . $e->getMessage());
+        }
+    })->name('checkout.success');
+        
+    // Usar el componente Livewire para órdenes
+    Route::get('/orders', \App\Livewire\OrderList::class)->name('orders.index');
+    
     Route::get("/orders/{order}", [OrderController::class, "show"])->name("orders.show");
     Route::get("/dashboard", function () {
         return view("dashboard");
@@ -57,4 +102,38 @@ Route::middleware(["auth"])->group(function () {
         Auth::logout();
         return redirect("/");
     })->name("logout");
+
+    Route::get('/user-status', function () {
+        $user = auth()->user();
+        return [
+            'user_id' => $user->id,
+            'cart_items_count' => $user->cartItems()->count(),
+            'cart_items' => $user->cartItems()->with('product')->get()->map(function($item) {
+                return [
+                    'product' => $item->product->name,
+                    'quantity' => $item->quantity,
+                    'price' => $item->product->price
+                ];
+            }),
+            'orders_count' => $user->orders()->count(),
+            'orders' => $user->orders()->with('items')->get()->map(function($order) {
+                return [
+                    'id' => $order->id,
+                    'total' => $order->total_amount,
+                    'status' => $order->status,
+                    'items_count' => $order->items->count()
+                ];
+            }),
+            'cart_total' => $user->cart_total
+        ];
+    });
+    
+    // Crear orden de prueba
+    Route::get('/test-order', function () {
+        return app(\App\Livewire\Checkout::class)->testCreateOrder();
+    });
 });
+
+// Webhook debe estar fuera del middleware auth
+Route::post("/stripe/webhook", [StripeWebhookController::class, "handleWebhook"])
+    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
