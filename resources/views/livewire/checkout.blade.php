@@ -144,8 +144,8 @@
                             <button 
                                 id="submit-button"
                                 type="button"
-                                class="w-full bg-green-500 hover:bg-green-600 text-white py-3 px-6 rounded-lg transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
                                 onclick="handlePayment()"
+                                class="w-full bg-green-500 hover:bg-green-600 text-white py-3 px-6 rounded-lg transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
                                 @if($isProcessing) disabled @endif
                             >
                                 <span id="button-text">
@@ -206,10 +206,10 @@
     @enderror
 </div>
 
-    <!-- Al final del archivo, después del form -->
     @if($clientSecret && !$stripeError)
         <script src="https://js.stripe.com/v3/"></script>
         <script>
+            // Configuración de Stripe
             const stripe = Stripe("{{ config('services.stripe.key') }}");
             
             const elements = stripe.elements({
@@ -220,13 +220,12 @@
             const paymentElement = elements.create('payment');
             paymentElement.mount('#payment-element');
 
-            const form = document.getElementById('payment-form');
-            const submitButton = document.getElementById('submit-button');
-            const buttonText = document.getElementById('button-text');
+            // Función handlePayment para el botón de pago
+            async function handlePayment() {
+                const submitButton = document.getElementById('submit-button');
+                const buttonText = document.getElementById('button-text');
 
-            form.addEventListener('submit', async (event) => {
-                event.preventDefault();
-                
+                // Validar formulario
                 if (!validateForm()) {
                     showMessage('Por favor completa todos los campos requeridos', 'error');
                     return;
@@ -247,7 +246,7 @@
                     const { error } = await stripe.confirmPayment({
                         elements,
                         confirmParams: {
-                            return_url: "{{ route('checkout.success') }}?payment_intent={{ $paymentIntentId }}",
+                            return_url: "{{ route('checkout.success') }}",
                         },
                     });
 
@@ -256,14 +255,15 @@
                         submitButton.disabled = false;
                         buttonText.textContent = 'Pagar ${{ number_format($total, 2) }}';
                     }
-                    // Si es exitoso, Stripe redirige automáticamente
+                    // Si es exitoso, Stripe redirige automáticamente a return_url
                 } catch (error) {
                     showMessage('Error: ' + error.message, 'error');
                     submitButton.disabled = false;
                     buttonText.textContent = 'Pagar ${{ number_format($total, 2) }}';
                 }
-            });
+            }
 
+            // Función para mostrar mensajes
             function showMessage(message, type) {
                 const messageElement = document.getElementById('payment-message');
                 messageElement.textContent = message;
@@ -276,6 +276,7 @@
                 }, 5000);
             }
 
+            // Función para validar el formulario
             function validateForm() {
                 const fields = [
                     "shippingAddress.name",
@@ -303,7 +304,7 @@
                 return isValid;
             }
 
-            // Verificar si estamos en la página de éxito
+            // Verificar si estamos en la página de éxito (para procesar después del pago)
             document.addEventListener('DOMContentLoaded', function() {
                 const urlParams = new URLSearchParams(window.location.search);
                 const paymentIntent = urlParams.get('payment_intent');
@@ -316,5 +317,12 @@
                 }
             });
         </script>
+        <script>
+        console.log('Stripe configurado:', typeof stripe !== 'undefined');
+        console.log('Elements configurado:', typeof elements !== 'undefined');
+        console.log('handlePayment definido:', typeof handlePayment !== 'undefined');
+        console.log('validateForm definido:', typeof validateForm !== 'undefined');
+        console.log('Client Secret:', "{{ $clientSecret ? 'Sí' : 'No' }}");
+    </script>
     @endif
 </div>

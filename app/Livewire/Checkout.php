@@ -27,6 +27,8 @@ class Checkout extends Component
     public $paymentIntentId;
     public $stripeError;
     public $isProcessing = false;
+    public $isSuccessPage = false;
+    public $successOrder = null;
 
     protected $rules = [
         "shippingAddress.name" => "required|string|max:255",
@@ -45,6 +47,14 @@ class Checkout extends Component
             return redirect()->route("login");
         }
 
+        // Verificar si estamos en la página de éxito
+        if (request()->has('payment_intent') && request('redirect_status') === 'succeeded') {
+            $this->isSuccessPage = true;
+            $this->handleSuccessPage();
+            return;
+        }
+
+        // Flujo normal de checkout
         $this->loadCartData();
         
         if ($this->cartItems->isEmpty()) {
@@ -52,6 +62,98 @@ class Checkout extends Component
         }
 
         $this->initializeStripe();
+    }
+
+    private function handleSuccessPage()
+    {
+        $paymentIntentId = request('payment_intent');
+        
+        \Log::info("=== MANEJANDO PÁGINA DE ÉXITO ===");
+        \Log::info("Payment Intent: " . $paymentIntentId);
+        
+        $this->isProcessing = true;
+
+        try {
+            $order = $this->createOrderFromPayment($paymentIntentId);
+            
+            if ($order) {
+                $this->successOrder = $order;
+                \Log::info("Orden procesada exitosamente: #" . $order->id);
+                
+                // Redirigir a la vista de la orden después de 2 segundos
+                // return redirect()->route('orders.show', $order->id);
+            } else {
+                $this->stripeError = "No se pudo crear la orden después del pago.";
+                \Log::error("No se pudo crear la orden para payment intent: " . $paymentIntentId);
+            }
+
+        } catch (\Exception $e) {
+            $this->stripeError = "Error procesando el pago: " . $e->getMessage();
+            \Log::error("Error en handleSuccessPage: " . $e->getMessage());
+        }
+
+        $this->isProcessing = false;
+    }
+
+    private function createOrderFromPayment($paymentIntentId)
+    {
+        \Log::info("Creando orden desde payment: " . $paymentIntentId);
+        
+        return DB::transaction(function () use ($paymentIntentId) {
+            // Verificar si ya existe una orden
+            $existingOrder = Order::where('stripe_payment_intent_id', $paymentIntentId)->first();
+            
+            if ($existingOrder) {
+                \Log::info("Orden existente encontrada: #" . $existingOrder->id);
+                $existingOrder->update(['status' => 'paid']);
+                return $existingOrder;
+            }
+
+            // Cargar datos del carrito actual
+            $this->loadCartData();
+            
+            if ($this->cartItems->isEmpty()) {
+                \Log::error("No hay items en el carrito para crear la orden");
+                throw new \Exception("No hay items en el carrito");
+            }
+
+            \Log::info("Creando nueva orden con " . $this->cartItems->count() . " items");
+
+            // Crear nueva orden
+            $order = Order::create([
+                "user_id" => auth()->id(),
+                "stripe_payment_intent_id" => $paymentIntentId,
+                "total_amount" => $this->total,
+                "status" => "paid",
+                "shipping_address" => $this->shippingAddress
+            ]);
+
+            \Log::info("Orden creada: #" . $order->id);
+
+            // Crear items de la orden
+            foreach ($this->cartItems as $cartItem) {
+                OrderItem::create([
+                    "order_id" => $order->id,
+                    "product_id" => $cartItem->product_id,
+                    "quantity" => $cartItem->quantity,
+                    "unit_price" => $cartItem->product->price
+                ]);
+
+                // Actualizar stock
+                $cartItem->product->decrement("stock", $cartItem->quantity);
+                
+                \Log::info("Item creado: " . $cartItem->product->name . " x " . $cartItem->quantity);
+            }
+
+            // Vaciar carrito
+            $deletedCount = auth()->user()->cartItems()->delete();
+            \Log::info("Carrito vaciado. Items eliminados: " . $deletedCount);
+
+            // Disparar evento para actualizar contador
+            $this->dispatch('cart-count-updated');
+
+            return $order;
+        });
     }
 
     private function loadCartData()
@@ -68,7 +170,7 @@ class Checkout extends Component
             Stripe::setApiKey(config("services.stripe.secret"));
 
             $paymentIntent = PaymentIntent::create([
-                "amount" => round($this->total * 100), // Stripe usa centavos
+                "amount" => round($this->total * 100),
                 "currency" => "usd",
                 "metadata" => [
                     "user_id" => auth()->id(),
@@ -86,91 +188,13 @@ class Checkout extends Component
         }
     }
 
-    // Método para crear orden después de pago exitoso
-    public function processSuccessfulPayment()
+    // Método para probar sin Stripe
+    public function testCreateOrder()
     {
-        $this->isProcessing = true;
+        $this->validate();
         
         try {
             DB::transaction(function () {
-                // Verificar si ya existe una orden para este payment intent
-                $existingOrder = Order::where('stripe_payment_intent_id', $this->paymentIntentId)->first();
-                
-                if ($existingOrder) {
-                    // Si ya existe, solo actualizar status
-                    $existingOrder->update(['status' => 'paid']);
-                    $order = $existingOrder;
-                    \Log::info("Orden existente actualizada: #" . $order->id);
-                } else {
-                    // CREAR NUEVA ORDEN
-                    $order = Order::create([
-                        "user_id" => auth()->id(),
-                        "stripe_payment_intent_id" => $this->paymentIntentId,
-                        "total_amount" => $this->total,
-                        "status" => "paid",
-                        "shipping_address" => $this->shippingAddress
-                    ]);
-
-                    \Log::info("Nueva orden creada: #" . $order->id);
-
-                    // CREAR ITEMS DE LA ORDEN
-                    foreach ($this->cartItems as $cartItem) {
-                        OrderItem::create([
-                            "order_id" => $order->id,
-                            "product_id" => $cartItem->product_id,
-                            "quantity" => $cartItem->quantity,
-                            "unit_price" => $cartItem->product->price
-                        ]);
-
-                        \Log::info("Item creado para orden #{$order->id}: {$cartItem->product->name} x {$cartItem->quantity}");
-
-                        // ACTUALIZAR STOCK
-                        $cartItem->product->decrement("stock", $cartItem->quantity);
-                        \Log::info("Stock actualizado: {$cartItem->product->name} -{$cartItem->quantity}");
-                    }
-                }
-
-                // VACIAR EL CARRITO - ESTO ES CLAVE
-                $cartItemsCount = auth()->user()->cartItems()->count();
-                auth()->user()->cartItems()->delete();
-                \Log::info("Carrito vaciado. Items eliminados: " . $cartItemsCount);
-
-                // Disparar evento para actualizar el contador
-                $this->dispatch('cart-count-updated');
-                
-                \Log::info("Proceso completado para usuario: " . auth()->id());
-
-                // Redirigir a la orden
-                session()->flash('success', '¡Pago exitoso! Orden #' . $order->id . ' creada.');
-                return redirect()->route("orders.show", $order->id);
-            });
-
-        } catch (\Exception $e) {
-            $this->isProcessing = false;
-            $this->stripeError = "Error procesando la orden: " . $e->getMessage();
-            \Log::error("Order Processing Error: " . $e->getMessage());
-            
-            session()->flash('error', 'Error al procesar la orden: ' . $e->getMessage());
-            return redirect()->route('cart');
-        }
-    }
-
-    // Método para probar sin Stripe - VERSIÓN CORREGIDA
-    public function testCreateOrder()
-    {
-        // Validar primero
-        $this->validate();
-        
-        \Log::info("=== INICIANDO TEST CREATE ORDER ===");
-        \Log::info("Usuario: " . auth()->id());
-        \Log::info("Items en carrito: " . $this->cartItems->count());
-        \Log::info("Total: " . $this->total);
-
-        try {
-            $result = DB::transaction(function () {
-                \Log::info("Creando orden...");
-                
-                // CREAR LA ORDEN
                 $order = Order::create([
                     "user_id" => auth()->id(),
                     "stripe_payment_intent_id" => "test_" . uniqid(),
@@ -179,12 +203,9 @@ class Checkout extends Component
                     "shipping_address" => $this->shippingAddress
                 ]);
 
-                \Log::info("Orden creada: #" . $order->id);
+                \Log::info("Orden de prueba creada: #" . $order->id);
 
-                // CREAR ITEMS DE LA ORDEN
                 foreach ($this->cartItems as $cartItem) {
-                    \Log::info("Creando item: " . $cartItem->product->name . " x " . $cartItem->quantity);
-                    
                     OrderItem::create([
                         "order_id" => $order->id,
                         "product_id" => $cartItem->product_id,
@@ -192,39 +213,40 @@ class Checkout extends Component
                         "unit_price" => $cartItem->product->price
                     ]);
 
-                    // ACTUALIZAR STOCK
                     $cartItem->product->decrement("stock", $cartItem->quantity);
-                    \Log::info("Stock actualizado: " . $cartItem->product->name . " -" . $cartItem->quantity);
                 }
 
-                // VACIAR CARRITO
-                $deletedCount = auth()->user()->cartItems()->delete();
-                \Log::info("Carrito vaciado. Items eliminados: " . $deletedCount);
-
-                // Disparar evento
+                // Vaciar carrito
+                auth()->user()->cartItems()->delete();
                 $this->dispatch('cart-count-updated');
                 
-                \Log::info("=== TEST COMPLETADO EXITOSAMENTE ===");
-
-                return $order;
+                \Log::info("Carrito vaciado en prueba");
+                
+                session()->flash('success', 'Orden de prueba #' . $order->id . ' creada exitosamente!');
+                return redirect()->route('orders.show', $order->id);
             });
-
-            // Redirigir después de la transacción
-            session()->flash('success', 'Orden de prueba #' . $result->id . ' creada exitosamente!');
-            return redirect()->route('orders.show', $result->id);
-
         } catch (\Exception $e) {
-            \Log::error("ERROR en testCreateOrder: " . $e->getMessage());
-            \Log::error("Trace: " . $e->getTraceAsString());
-            
             $this->stripeError = "Error: " . $e->getMessage();
-            session()->flash('error', 'Error creando orden de prueba: ' . $e->getMessage());
-            return redirect()->route('checkout');
+            \Log::error("Test Order Error: " . $e->getMessage());
         }
+    }
+
+    public function redirectToOrder()
+    {
+        if ($this->successOrder) {
+            return redirect()->route('orders.show', $this->successOrder->id);
+        }
+        return redirect()->route('orders.index');
     }
 
     public function render()
     {
+        // Si estamos en la página de éxito, mostrar vista diferente
+        if ($this->isSuccessPage) {
+            return view('livewire.checkout-success')->layout('components.app-layout');
+        }
+
+        // Vista normal de checkout
         return view('livewire.checkout')->layout('components.app-layout');
     }
 }

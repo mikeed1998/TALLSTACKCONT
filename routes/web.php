@@ -58,37 +58,8 @@ Route::post("/stripe/webhook", [StripeWebhookController::class, "handleWebhook"]
 Route::middleware(["auth"])->group(function () {
     Route::get("/cart", ShoppingCart::class)->name("cart");
     Route::get("/checkout", Checkout::class)->name("checkout");
-    Route::get('/checkout/success', function () {
-        $paymentIntentId = request('payment_intent');
-        
-        \Log::info("Checkout success accessed", [
-            'payment_intent' => $paymentIntentId,
-            'all_params' => request()->all()
-        ]);
+    Route::get('/checkout/success', Checkout::class)->name('checkout.success');
 
-        if (!$paymentIntentId) {
-            \Log::error("No payment_intent found in success URL");
-            return redirect()->route('dashboard')->with('error', 'No se pudo verificar el pago');
-        }
-
-        try {
-            // Buscar la orden por payment intent
-            $order = \App\Models\Order::where('stripe_payment_intent_id', $paymentIntentId)->first();
-            
-            if ($order) {
-                \Log::info("Order found: #" . $order->id);
-                return redirect()->route('orders.show', $order->id)->with('success', '¡Pago exitoso!');
-            } else {
-                \Log::warning("Order not found for payment intent: " . $paymentIntentId);
-                
-                // Si no encuentra la orden, redirigir al dashboard con mensaje
-                return redirect()->route('dashboard')->with('warning', 'Pago procesado. La orden está siendo creada...');
-            }
-        } catch (\Exception $e) {
-            \Log::error("Error in checkout success: " . $e->getMessage());
-            return redirect()->route('dashboard')->with('error', 'Error: ' . $e->getMessage());
-        }
-    })->name('checkout.success');
         
     // Usar el componente Livewire para órdenes
     Route::get('/orders', \App\Livewire\OrderList::class)->name('orders.index');
