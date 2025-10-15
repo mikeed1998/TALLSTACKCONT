@@ -88,7 +88,9 @@
                             <!-- Login & Register Links -->
                             <div class="flex space-x-4">
                                 <a href="{{ route("login") }}" class="text-gray-600 hover:text-gray-900">Iniciar Sesión</a>
-                                <a href="{{ route("register") }}" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">Registrarse</a>
+                                @if(Auth::user())
+                                    <a href="{{ route("register") }}" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">Registrarse</a>
+                                @endif
                             </div>
                         @endauth
                     </div>
