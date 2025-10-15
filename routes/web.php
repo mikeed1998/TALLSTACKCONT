@@ -3,6 +3,7 @@
 use App\Livewire\ProductList;
 use App\Livewire\ShoppingCart;
 use App\Livewire\Checkout;
+use App\Livewire\OrderList;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Auth\LoginController;
